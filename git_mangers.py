@@ -30,6 +30,7 @@ from tkinter import ttk, messagebox, filedialog, simpledialog, colorchooser
 # ① 强制忽略的文件名（代码层过滤，永远不会被 git add 添加）
 #    在此列表里的文件，不管 .gitignore 怎么写，都绝对不会上传
 FORCE_IGNORE_FILES = [
+    "git_mangers.py",             # 本工具自身
     "AGENTS.md",                 # 项目代理规则说明
 ]
 
@@ -1300,13 +1301,14 @@ class GitManagerApp(tk.Tk):
         e_desc.pack(side='left', fill='x', expand=True)
         def _paste_to(widget):
             try:
-                widget.clipboard_clear()
-                widget.event_generate('<<Paste>>')
-                import tkinter.messagebox as _mb
                 txt = widget.clipboard_get()
-                widget.delete(0, 'end'); widget.insert(0, txt)
             except Exception:
+                txt = ""
+            if not txt:
                 FloatingToast(self, '剪贴板为空', '#D84315')
+                return
+            widget.delete(0, 'end')
+            widget.insert(0, txt)
         tk.Button(
             desc_row, text='📋 Paste', bg=BTN_COLOR1, fg='white',
             relief='flat', activebackground=BTN_COLOR1,
