@@ -35,16 +35,46 @@ FORCE_IGNORE_FILES = [
     "CLAUDE.md",                 # 项目代理规则说明    
 ]
 
-# ② 强制忽略的文件后缀（小写匹配，如 .env 文件、.paml 项目配置等隐私文件）
+# ② 强制忽略的文件后缀（小写匹配，黑名单只管隐私/编译产物，不要放通用源码后缀）
+#    ⚠️ 这里出现的通配规则（如 *.json）会直接进 .gitignore 影响整个项目，
+#       所以不要再放通用的 *.json / *.py / *.yml 等合法代码配置后缀。
 FORCE_extra_suffixes = [
     ".env",       # 环境变量 / 密钥
     ".paml",      # 自定义项目配置 / 隐私参数
-    ".ini",      # 自定义项目配置 / 隐私参数
-    ".json",      # 自定义项目配置 / 隐私参数 
-    ".db",      # 数据库 / 大文件
-    ".duckdb",      # 数据库/ 大文件   
-    ".csv",      # 数据/导出
+    ".ini",       # 自定义项目配置 / 隐私参数
+    ".db",        # 数据库 / 大文件
+    ".duckdb",    # 数据库 / 大文件
+    ".csv",       # 数据/导出
+    ".bak",       # 备份
+    ".tmp",       # 临时
+    ".log",       # 日志
+    ".sqlite3",   # sqlite
+    ".pyc",       # py 编译产物
+    ".class",     # java 编译产物
+    ".o",         # 目标文件
+    ".so",        # 动态库
+    ".dylib",     # mac 动态库
+    ".dll",       # Windows 动态库（可选，视项目而定）
+    ".lib",       # 静态库
+    ".a",         # unix 静态库
+    ".obj",       # objc
+    ".pdb",       # 调试符号
+    ".idb",       # ida 数据库
+    ".i64",       # ida 64 位数据库
+    ".vsix",      # VSIX 扩展包（可选）
+    ".egg-info",  # python 包信息
+    ".whl",       # python wheel
+    ".tar.gz",    # 源码包
+    ".zip",       # 压缩包
+    ".7z",        # 7z
+    ".rar",       # rar
+    ".pt",        # pytorch 模型
+    ".pth",       # pytorch
+    ".ckpt",      # 检查点
+    ".onnx",      # onnx 模型
+    ".engine",    # tensorrt
 ]
+# 注意：.json / .yml / .yaml / .toml 等通用代码配置后缀 **不要** 放这里！
 
 # ③ 强制忽略的目录名（匹配任意层级的同名目录，递归跳过整棵子树）
 #    例：["chat_history", "tmp_uploads", "dist", "build"]
@@ -70,7 +100,8 @@ SKIP_DIR_NAMES = {
 }
 
 # ⑥ 可额外忽略的后缀（可在此直接添加，或在 GUI 设置里临时添加）
-EXTRA_extra_suffixes = [".bak", ".tmp", ".log", ".sqlite3", ".db", ".pyc"]
+# 已合并到 FORCE_extra_suffixes，这里保留空列表以便 GUI 运行时追加
+EXTRA_extra_suffixes = []
 
 # ⑦ 可额外忽略的文件名（可在此直接添加，或在 GUI 设置里临时添加）
 EXTRA_extra_names = ["credentials.json", "id_rsa", "id_ed25519", ".netrc"]
@@ -268,9 +299,9 @@ def scan_project_files(path=None, extra_suffixes=None, extra_names=None,
                        extra_dirs=None):
     """递归扫描项目文件，返回 [(绝对路径, 相对路径), ...] 过滤后列表。
 
-    额外处理：
-    - 跳过内含 .git 子目录的"嵌套仓库"（ppswsh_fix/ 这种会让
+    - 跳过内含 `.git` 子目录的嵌套仓库子树（ppswsh_fix/ 这种会让
       `git add -A .` 报 'does not have a commit checked out'）。
+    - 根目录自己的文件不会因为根目录有 `.git` 子目录就被跳过。
     """
     root = os.path.abspath(path or PROGRAM_DIR)
     results = []
@@ -278,13 +309,17 @@ def scan_project_files(path=None, extra_suffixes=None, extra_names=None,
     merged_names = list(FORCE_IGNORE_FILES) + list(EXTRA_extra_names)
     merged_dirs = set(SKIP_DIR_NAMES) | set(FORCE_IGNORE_DIRS) | set(extra_dirs or [])
     for dirpath, dirnames, filenames in os.walk(root):
-        # 跳过内含 .git 的嵌套仓库目录（git 子模块 / 子仓库）
-        if '.git' in dirnames:
-            # os.walk 用 dirnames[:] 原地修改以阻止进入子目录
-            dirnames[:] = [d for d in dirnames
-                           if d not in merged_dirs and d != '.git']
-            continue
+        # 1) 过滤掉已知要跳过的目录（.git/__pycache__/venv/node_modules 等）
         dirnames[:] = [d for d in dirnames if d not in merged_dirs]
+        # 2) 对剩余的子目录做"嵌套仓库"检测：
+        #    如果某个子目录里有自己的 .git 子目录（也就是它本身是个 git 仓库），
+        #    那就把这个子目录也排除掉，不让 os.walk 深入进去。
+        #    注意：我们不能用 "if '.git' in dirnames: continue"，否则根目录
+        #    自己的文件也会被跳过！
+        def _has_git_subdir(sub_dir):
+            return os.path.isdir(os.path.join(dirpath, sub_dir, '.git'))
+        dirnames[:] = [d for d in dirnames if not _has_git_subdir(d)]
+        # 3) 处理当前目录下的文件
         for fn in filenames:
             full = os.path.join(dirpath, fn)
             try:
@@ -302,15 +337,14 @@ def scan_project_files(path=None, extra_suffixes=None, extra_names=None,
 def auto_add_filtered(cwd, log_fn=None):
     """用 scan_project_files 扫描并 git add 所有过滤后的文件。
 
-    直接用 `git add -- <paths>` 而不是 `git add -A .`，避免：
-      - 嵌套仓库（内含 .git）导致 add 失败
-      - 隐藏文件被 .gitignore 误伤
+    - 用 `git add -f -- <paths>` 强制添加，绕过 .gitignore 限制。
+      因为我们已经通过 _is_ignored 决定了哪些应该上传，不需要再被 .gitignore 二次过滤。
+    - 分批 add，避免命令行过长。
     Returns:
         (added_paths, ok, message)
     """
     files = scan_project_files(cwd)
     if not files:
-        # 调试：打印目录里有什么文件，方便排查为什么被全过滤了
         if log_fn:
             try:
                 root = os.path.abspath(cwd or '.')
@@ -340,28 +374,34 @@ def auto_add_filtered(cwd, log_fn=None):
     if log_fn:
         log_fn('📂 扫描到 {} 个文件待添加。'.format(len(files)), 'INFO')
     paths = [p.replace("\\", "/") for _, p in files]
-    BATCH = 400
+    BATCH = 200
     added = []
     all_ok = True
     for i in range(0, len(paths), BATCH):
         batch = paths[i:i + BATCH]
+        # -f 绕过 .gitignore（我们自己已经决定了哪些要 add）
         rc, out, err = run_git(
-            ["add", "--"] + batch, cwd=cwd)
+            ["add", "-f", "--"] + batch, cwd=cwd)
         if out and log_fn:
-            for line in out.splitlines()[:20]:
+            for line in out.splitlines()[:10]:
                 log_fn(line, 'INFO')
         if err and log_fn:
-            for line in err.splitlines()[:20]:
+            for line in err.splitlines()[:15]:
                 log_fn(line, 'WARN' if rc != 0 else 'INFO')
         if rc != 0:
             all_ok = False
         else:
             added.extend(batch)
-    # 强制 add .gitignore（即使它被别的规则误伤也要 add 进来）
-    gi = os.path.join(cwd, '.gitignore') if cwd else '.gitignore'
-    if os.path.exists(gi):
-        run_git(['add', '--', '.gitignore'], cwd=cwd)
+    # .gitignore 单独 add（它可能被之前的 auto-gen 规则忽略）
+    gi_path = os.path.join(cwd, '.gitignore') if cwd else '.gitignore'
+    if os.path.exists(gi_path):
+        run_git(['add', '-f', '--', '.gitignore'], cwd=cwd)
         added.append('.gitignore')
+    if log_fn:
+        if len(added) >= 200:
+            log_fn('📦 auto add {} 个文件（已过滤安全，强制上传）'.format(len(added)), 'INFO')
+        else:
+            log_fn('📦 auto add {} 个文件'.format(len(added)), 'INFO')
     return added, all_ok, ''
 
 
@@ -739,38 +779,27 @@ def _collect_changed_files(cwd=None) -> list:
 
 
 def _build_gitignore_text() -> str:
-    """Build .gitignore content from FORCE_IGNORE_* rules.
+    """Build .gitignore content.
 
-    Includes the tool's own files so repo never commits private
-    files the helper itself may drop.
+    规则：
+    - 工具自身私有文件（git_manger.py / config.yaml 等）
+    - 隐私/大文件后缀（.env / .db / .csv / .log / 编译产物）
+    - 但 **绝不** 把通用代码配置后缀（.json / .yml / .yaml / .toml / .ini）写进 .gitignore，
+      否则像 config.json / pyproject.toml / package.json 这种合法配置会被 git add 忽略。
     """
-    # Derive suffix patterns from user-configured constants
-    all_suffixes = set()
-    for sf in list(FORCE_extra_suffixes) + list(EXTRA_extra_suffixes):
-        sf = sf.strip().lower()
-        if not sf:
-            continue
-        if not sf.startswith('.'):
-            continue
-        all_suffixes.add('*' + sf)
-    # Always include these patterns even if not in user lists
-    always_suffixes = {'*.pyc', '*.pyo', '*.bak', '*.tmp', '*.log',
-                       '*.token', '*.key', '*.pem', '*.crt', '*.cer',
-                       '*.pfx', '*.p12', '*.egg-info'}
-    all_suffixes |= always_suffixes
-    # Directories
-    always_dirs = [
-        '# Editor / OS',
-        '.vscode/',
-        '.idea/',
-        '.DS_Store',
-        'Thumbs.db',
-        '__pycache__/',
-        'node_modules/',
-        '.npm/',
+    PRIVACY_PATTERNS = [
+        '*.env', '*.paml', '*.db', '*.duckdb', '*.csv',
+        '*.bak', '*.tmp', '*.log', '*.sqlite3',
+        '*.pyc', '*.pyo', '*.class', '*.o', '*.so', '*.dylib', '*.dll',
+        '*.lib', '*.a', '*.obj',
+        '*.pdb', '*.idb', '*.i64',
+        '*.egg-info', '*.whl', '*.tar.gz', '*.zip', '*.7z', '*.rar',
+        '*.pt', '*.pth', '*.ckpt', '*.onnx', '*.engine',
+        '*.token', '*.key', '*.pem', '*.crt', '*.cer', '*.pfx', '*.p12',
     ]
-    # Build
+    # 用户配置里额外的后缀目录
     user_dirs = [d.rstrip('/') + '/' for d in FORCE_IGNORE_DIRS]
+    dirs_block = sorted(set(user_dirs))
     lines = [
         '# Auto-generated by git_manger.py - DO NOT EDIT MANUALLY',
         '#### Tool private (never commit) ####',
@@ -779,15 +808,25 @@ def _build_gitignore_text() -> str:
         'config.yaml',
         'credentials.json',
         '.netrc',
-    ]
-    lines += [
-        '#### Suffix ignore (from user config) ####',
-    ] + sorted(all_suffixes) + [
+        '#### Privacy / big files ####',
+    ] + PRIVACY_PATTERNS + [
         '#### User dirs ####',
-    ] + sorted(set(user_dirs)) + [
-        '#### Standard dirs ####',
-    ] + always_dirs
+    ] + dirs_block + [
+        '#### Editor / OS ####',
+        '.vscode/',
+        '.idea/',
+        '.DS_Store',
+        'Thumbs.db',
+        '__pycache__/',
+        'node_modules/',
+        '.npm/',
+    ]
     return '\n'.join(lines) + '\n'
+
+# NOTE: .gitignore 里不要再出现 `*.json` 这种通配规则，
+# 否则像 config.json / requirements.json / package.json 这种合法代码配置
+# 也会被 git add 默认忽略（必须 -f 才能 add）。
+# 如果真想忽略某个特定 JSON，写全名即可。
 
 def _ensure_gitignore(project_dir: str) -> None:
     """Create/update .gitignore at project root with our rules.
