@@ -104,7 +104,7 @@ SKIP_DIR_NAMES = {
 EXTRA_extra_suffixes = []
 
 # ⑦ 可额外忽略的文件名（可在此直接添加，或在 GUI 设置里临时添加）
-EXTRA_extra_names = ["credentials.json", "id_rsa", "id_ed25519", ".netrc"]
+EXTRA_extra_names = ["credentials.json", "config.json", "id_rsa", "id_ed25519", ".netrc"]
 
 # ⑧ GUI 外观 / 功能默认值
 DEFAULT_BRANCH = "main"
@@ -240,15 +240,24 @@ def _is_ignored(rel_path, extra_suffixes=None, extra_names=None):
     """判断相对路径是否应被忽略。
 
     优先级（从高到低）：
-    1. 白名单后缀（代码/文档/资源一律上传）
+    1. 黑名单文件名（AGENTS.md / CLAUDE.md / credentials.json 等，指定即忽略）
     2. 白名单文件名（README* / requirements.txt / LICENSE* 等）
-    3. 黑名单后缀（隐私/大文件如 .env/.db/.csv）
-    4. 黑名单文件名（credentials.json / id_rsa 等）
+    3. 白名单后缀（代码/文档/资源一律上传）
+    4. 黑名单后缀（隐私/大文件如 .env/.db/.csv）
     5. 隐藏文件（. 开头一律忽略）
     """
     if not rel_path:
         return True
 
+    name = os.path.basename(rel_path)
+    low = name.lower()
+    base, ext = os.path.splitext(low)
+
+    # ---- 白名单文件名（不看后缀直接放行） ----
+    WHITELIST_NAMES = {
+        "requirements.txt", "readme", "readme.md",
+        "license", "license.txt", "license.lic", "license.md",
+    }
     # ---- 白名单后缀（代码/文档/资源/图标，一律允许上传） ----
     WHITELIST_SUFFIXES = {
         ".py", ".pyw", ".md", ".txt", ".rst",
@@ -260,20 +269,20 @@ def _is_ignored(rel_path, extra_suffixes=None, extra_names=None):
         ".ttf", ".woff", ".woff2", ".otf",
         ".gitignore", ".gitattributes", ".gitkeep",
     }
+
+    # ---- 黑名单文件名（最高优先级：指定文件名一律忽略） ----
+    merged_nm = list(FORCE_IGNORE_FILES) + list(extra_names or [])
+    merged_nm += list(EXTRA_extra_names)
+    if low in merged_nm:
+        return True
+
     # ---- 白名单文件名（不看后缀直接放行） ----
-    WHITELIST_NAMES = {
-        "requirements.txt", "readme", "readme.md",
-        "license", "license.txt", "license.lic", "license.md",
-    }
-
-    name = os.path.basename(rel_path)
-    low = name.lower()
-    base, ext = os.path.splitext(low)
-
     if low in WHITELIST_NAMES or low.startswith("readme."):
         return False  # README* / LICENSE* / requirements.txt 一律上传
+
+    # ---- 白名单后缀（源代码/文档/资源一律上传） ----
     if ext in WHITELIST_SUFFIXES:
-        return False  # 源代码/文档/资源一律上传
+        return False
 
     # ---- 黑名单后缀（隐私/大文件，确定不上传） ----
     merged_sf = list(FORCE_extra_suffixes) + list(extra_suffixes or [])
@@ -281,12 +290,6 @@ def _is_ignored(rel_path, extra_suffixes=None, extra_names=None):
     for suf in merged_sf:
         if low.endswith(suf.lower()):
             return True
-
-    # ---- 黑名单文件名 ----
-    merged_nm = list(FORCE_IGNORE_FILES) + list(extra_names or [])
-    merged_nm += list(EXTRA_extra_names)
-    if low in merged_nm:
-        return True
 
     # ---- 隐藏文件（. 开头一律忽略） ----
     if AUTO_IGNORE_DOTFILES and low.startswith("."):
@@ -806,6 +809,7 @@ def _build_gitignore_text() -> str:
         'git_manger.py',
         'AGENTS.md',
         'config.yaml',
+        'config.json',
         'credentials.json',
         '.netrc',
         '#### Privacy / big files ####',
