@@ -1075,8 +1075,9 @@ class GitManagerApp(tk.Tk):
             ("🚀", "初始化仓库", self._cmd_init),
             ("📦", "扫描并添加", self._cmd_add),
             ("✍️", "代码提交", self._cmd_commit),
+            ("🗑️", "删除远程", self._cmd_prune_remote),
         ]:
-            b = self._mk_btn(row1, "{} {}".format(emoji, txt), BTN_COLOR1, cmd, width=14)
+            b = self._mk_btn(row1, "{} {}".format(emoji, txt), BTN_COLOR1, cmd, width=12)
             b.pack(side="left", padx=3)
             ToolTip(b, txt + "（使用系统 Git）")
 
@@ -1541,6 +1542,27 @@ class GitManagerApp(tk.Tk):
             return
         self.cfg["last_commit_msg"] = msg
         self._run_async(lambda: self._exec_git(["commit", "-m", msg], label="commit"))
+
+    def _cmd_prune_remote(self):
+        """从 git 索引中移除匹配过滤规则的已追踪文件（git rm --cached）。"""
+        if not is_git_repo(self.project_dir):
+            FloatingToast(self, "⚠️ 请先初始化仓库", "#D32F2F"); return
+        if not messagebox.askyesno("删除远程文件",
+                                   "将从 Git 索引中移除所有匹配过滤规则的已追踪文件？\n"
+                                   "（本地文件不会被删除，只会停止追踪）"):
+            return
+        self._run_async(lambda: self._do_prune())
+
+    def _do_prune(self):
+        removed = _prune_ignored_from_index(cwd=self.project_dir)
+        if removed:
+            self._log("🗑️ 已从索引移除 {} 个文件：{}".format(
+                len(removed), ", ".join(removed[:5]) +
+                ("..." if len(removed) > 5 else "")), "INFO")
+            FloatingToast(self, "✅ 已移除 {} 个文件".format(len(removed)), "#388E3C")
+        else:
+            self._log("✅ 没有需要移除的匹配文件", "INFO")
+            FloatingToast(self, "✅ 没有匹配文件", "#388E3C")
 
     def _cmd_remote(self):
         dlg = DialogWithPaste(self, "远程仓库", "输入远程仓库 URL（留空查看/删除）：",
