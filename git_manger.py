@@ -1,4 +1,4 @@
-﻿#/usr/bin/env python3
+#/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 git_manger.py  ——  Git 上传辅助工具（GUI 版）
@@ -15,6 +15,7 @@ git_manger.py  ——  Git 上传辅助工具（GUI 版）
 import os
 import sys
 import io
+import re
 import json
 import subprocess
 import threading
@@ -270,10 +271,11 @@ def _is_ignored(rel_path, extra_suffixes=None, extra_names=None):
         ".gitignore", ".gitattributes", ".gitkeep",
     }
 
-    # ---- 黑名单文件名（最高优先级：指定文件名一律忽略） ----
-    merged_nm = list(FORCE_IGNORE_FILES) + list(extra_names or [])
-    merged_nm += list(EXTRA_extra_names)
-    if low in merged_nm:
+    # ---- 黑名单文件名（最高优先级：指定文件名一律忽略，大小写不敏感） ----
+    merged_nm_lower = {n.lower() for n in FORCE_IGNORE_FILES}
+    merged_nm_lower |= {n.lower() for n in (extra_names or [])}
+    merged_nm_lower |= {n.lower() for n in EXTRA_extra_names}
+    if low in merged_nm_lower:
         return True
 
     # ---- 白名单文件名（不看后缀直接放行） ----
